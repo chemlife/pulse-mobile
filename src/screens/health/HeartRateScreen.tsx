@@ -5,20 +5,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { View } from "react-native";
 import { useFocusEffect } from "expo-router";
-import { dayLabel, MISSING } from "@/lib/format";
+import { ChevronLeft, ChevronRight } from "lucide-react-native";
+import { clock, dayLabel, MISSING } from "@/lib/format";
 import { getHeartRate } from "@/queries/health";
 import type { HeartRateVM } from "@/queries/types";
 import { refreshLiveHr, useLiveHr } from "@/state/liveHr";
-import { IntradayHrChart, IntradayHrChartSkeleton } from "@/ui/charts/IntradayHrChart";
+import { IntradayHrChart, IntradayHrChartSkeleton, type HrSeries } from "@/ui/charts/IntradayHrChart";
 import { ZoneBars, ZoneBarsSkeleton } from "@/ui/charts/ZoneBars";
 import { cn } from "@/ui/cn";
+import { Icon } from "@/ui/Icon";
 import { CAPTION, LABEL, ValueUnit } from "@/ui/metrics/primitives";
+import { Press } from "@/ui/Press";
+import { Segmented } from "@/ui/Segmented";
 import { DetailShell } from "@/ui/shells/DetailShell";
 import { SectionShell } from "@/ui/shells/SectionShell";
+import { useOptionalShellCalendar } from "@/ui/shells/ShellStatus";
 import { SkeletonText } from "@/ui/Skeleton";
 import { Text } from "@/ui/Text";
 import { useDayScreen } from "./day";
 import { ErrorView } from "./ErrorView";
+import { HR_RANGES, hrWindow, type HrRange } from "./hrWindow";
 import { HEART_RATE_INFO } from "./info";
 import { LastReading } from "./LastReading";
 import { LiveHeartRateHero } from "./LiveHeartRateHero";
@@ -85,6 +91,54 @@ function HeartRateHero({ v, now }: { v: HeartRateVM; now: number }) {
   );
 }
 
+/** One step of the window, back or forward; dimmed where there is no earlier or later window. */
+function StepButton({ dir, enabled, onPress }: { dir: "back" | "forward"; enabled: boolean; onPress: () => void }) {
+  return (
+    <Press
+      accessibilityRole="button"
+      accessibilityLabel={dir === "back" ? "Earlier" : "Later"}
+      accessibilityState={{ disabled: !enabled }}
+      disabled={!enabled}
+      onPress={onPress}
+      activeBg="bg-fill-hover"
+      className={cn("size-10 items-center justify-center rounded-md", !enabled && "opacity-disabled")}
+    >
+      <Icon icon={dir === "back" ? ChevronLeft : ChevronRight} size={20} tone="muted-foreground" />
+    </Press>
+  );
+}
+
+/** The day's chart with a 24H / 8H / 3H / 1H range; a shorter range steps back and forward through the day. */
+function DayChart({ series }: { series: { value: HrSeries; reason: null; provisional: boolean } }) {
+  const tz = useOptionalShellCalendar()?.timeZone;
+  const [range, setRange] = useState<HrRange>("24h");
+  const [back, setBack] = useState(0);
+  const w = useMemo(() => hrWindow(series.value.points, range, back), [series, range, back]);
+  const data = useMemo(() => (range === "24h" ? series : { ...series, value: { ...series.value, points: w.points, now: back === 0 ? series.value.now : undefined } }), [series, range, back, w]);
+  return (
+    <View className="gap-3">
+      <Segmented
+        label="Range"
+        fill
+        value={range}
+        options={HR_RANGES}
+        onChange={(r) => {
+          setRange(r);
+          setBack(0);
+        }}
+      />
+      <IntradayHrChart data={data} emptyCopy={range === "24h" ? undefined : "No heart-rate data in this window."} />
+      {range !== "24h" && (
+        <View className="flex-row items-center justify-between">
+          <StepButton dir="back" enabled={w.canBack} onPress={() => setBack((b) => b + 1)} />
+          <Text className="font-numeric text-[13px] font-semibold tabular-nums text-foreground-secondary">{`${clock(w.start, tz)} – ${clock(w.end, tz)}`}</Text>
+          <StepButton dir="forward" enabled={w.canForward} onPress={() => setBack((b) => Math.max(0, b - 1))} />
+        </View>
+      )}
+    </View>
+  );
+}
+
 export function HeartRateScreen() {
   const { data, error, reload } = useDayScreen("heartRate", getHeartRate);
   const now = useLiveDay(data?.vm.isToday ?? false, reload);
@@ -118,7 +172,7 @@ export function HeartRateScreen() {
       }
       primary={
         <SectionShell variant="card" title={vm.isToday ? "Today" : dayLabel(d, today)} info={{ title: "Daily heart rate", body: "Heartbeats per minute across the selected day. Gaps mean no heart rate reading was available." }}>
-          <IntradayHrChart data={series} />
+          <DayChart key={d} series={series} />
         </SectionShell>
       }
       secondary={[

@@ -31,6 +31,8 @@ export type IntradayHrChartProps = {
   data: Metric<HrSeries> | null | undefined;
   /** `day`: 200 px with 6-hourly ticks. `activity`: 180 px for one workout window. */
   variant?: "day" | "activity";
+  /** Copy when no minute has a reading (default: "No heart-rate data for this day."). */
+  emptyCopy?: string;
 };
 
 const AXIS_H = 30;
@@ -73,7 +75,15 @@ function Chart({ hr, variant }: { hr: HrSeries; variant: "day" | "activity" }) {
         const tx = linearScale([first, last], [x0, x1]);
         const y = linearScale(domain, [y1, y0]);
         const yTicks = ticksIn(domain[0], domain[1], 4);
-        const tickTimes = workout ? [workout.start, workout.end] : variant === "day" ? hourTicks(first, last, 6, tz) : clockTicks(first, last, last - first <= 3_600_000 ? 15 : last - first <= 3 * 3_600_000 ? 30 : 60, tz);
+        // A day zoomed to 8, 3 or 1 hours steps its ticks by 2 hours, 1 hour or 15 minutes.
+        const span = last - first;
+        const tickTimes = workout
+          ? [workout.start, workout.end]
+          : variant === "day"
+            ? span > 8 * 3_600_000
+              ? hourTicks(first, last, 6, tz)
+              : clockTicks(first, last, span > 3 * 3_600_000 ? 120 : span > 3_600_000 ? 60 : 15, tz)
+            : clockTicks(first, last, span <= 3_600_000 ? 15 : span <= 3 * 3_600_000 ? 30 : 60, tz);
         // A workout's two ends always show (interval 0); else the web's interval="preserveStartEnd" minTickGap={24}.
         const shownTicks = workout ? tickTimes.map((t) => ({ t, x: tx(t) })) : preserveStartEnd(tickTimes.map((t) => ({ x: tx(t), size: tickTextWidth(clock(t, tz)) })), 0, width, 24).map((k) => ({ t: tickTimes[k.index], x: k.x }));
         const mk = (key: "hot" | "cool") => rows.map((r) => ({ x: tx(r.t), y: r[key] === null ? null : y(r[key]!) }));
@@ -133,10 +143,10 @@ function ZoneName({ name }: { name: string }) {
 }
 
 /** Heart rate across the day or an activity, with zones and markers (spec §5.7). */
-export function IntradayHrChart({ data, variant = "day" }: IntradayHrChartProps) {
+export function IntradayHrChart({ data, variant = "day", emptyCopy = "No heart-rate data for this day." }: IntradayHrChartProps) {
   const empty = (
     <View className="items-center">
-      <EmptyState body="No heart-rate data for this day." />
+      <EmptyState body={emptyCopy} />
     </View>
   );
   return (
